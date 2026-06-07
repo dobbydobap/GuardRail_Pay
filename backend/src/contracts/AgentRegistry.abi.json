@@ -1,0 +1,8 @@
+[
+  "function isRegistered(address agent) view returns (bool)",
+  "function getPolicy(address agent) view returns (uint256 maxPerTx, uint256 dailyLimit, uint256 requireEscrowAbove)",
+  "function isAllowed(address agent, address to) view returns (bool)",
+
+  "event AgentRegistered(address indexed agent)",
+  "event PolicyUpdated(address indexed agent, uint256 maxPerTx, uint256 dailyLimit, uint256 requireEscrowAbove)"
+]
