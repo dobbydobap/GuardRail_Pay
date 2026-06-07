@@ -1,33 +1,208 @@
-# Monad Blitz Bangalore Submission Process
+# GuardRail Pay / AgentVault
 
-1. Visit the `monad-blitz-bangalore` repo (link here) and fork it.
+Runtime payment firewall for AI agents on Monad Testnet.
 
-![image](https://github.com/user-attachments/assets/ab46b2ea-ee0f-4237-87ef-c33bb1a94749)
+AI agents can request payments, but funds only move after `AgentVault` enforces on-chain policy. Unsafe requests are blocked on-chain and still emit receipts for the demo.
 
-2. Give it your project name, a one-liner description, make sure you are forking `main` branch and click `Create Fork`.
+## Why This Exists
 
-![image](https://github.com/user-attachments/assets/ffdebab7-c340-4e14-bd3c-36905f1016a3)
+Autonomous agents can be tricked by tool output, prompt injection, or bad routing. A normal wallet lets the agent sign whatever it decides. GuardRail Pay puts a smart contract policy layer between the agent and the funds:
 
-3. In your fork you can make all the changes you want, add code of your project, create branches, add information to `README.md`, you can change anything and everything.
+- safe API/tool payments can go through
+- verifier work can be paid through escrow
+- prompt-injection payment attempts are blocked
+- overspend or unapproved-recipient attempts are blocked
+- every decision emits an event the backend/frontend can show
 
-4. Once you are done with your project and ready for submission, create a pull request.
+This is the core hackathon idea: **the AI can be fooled, but the wallet policy cannot be bypassed by the prompt.**
 
-![image](https://github.com/user-attachments/assets/58aa7140-55db-49db-9361-332449dbe116)
+## Contracts
 
-![image](https://github.com/user-attachments/assets/5c8c61b1-23fd-4177-b06e-e8fca3a61ad4)
+### `AgentRegistry.sol`
 
-5. Make sure you are create a pull request to the right repo `monad-developers/monad-blitz-bangalore`.
+Owns setup and policy metadata:
 
-![image](https://github.com/user-attachments/assets/41774ebc-d64c-43de-b3be-7e46d21bcaba)
+- register agent addresses
+- register recipient/tool/verifier addresses
+- allow or block recipients
+- track suspicious count per agent
+- freeze agents after repeated blocked attempts
+- expose read functions for `AgentVault`
 
-6. Make sure you see “Able to merge”, when creating a pull request then you can click `Create Pull Request`.
+### `AgentVault.sol`
 
-![image](https://github.com/user-attachments/assets/b52f5e6f-9091-43af-9025-f2c61a7d1205)
+Owns funds and enforcement:
 
-7. Give the pull request your project name and a description of the project (describe as much as you can about your project you can even add video demo links) then click `Create pull request`.
+- accepts native MON deposits
+- lets registered agents request payments
+- checks policy before transfer
+- emits `PaymentApproved` for safe payments
+- emits `PaymentBlocked` for unsafe payments
+- creates verifier escrow
+- lets verifier approve and release escrow
 
-![image](https://github.com/user-attachments/assets/9a3cc30a-498f-4d83-9060-adb11f88eff6)
+## Policy Rules
 
-8. Finally verify if you created your pull request correctly by checking the repo on which the pull request is created and the source and destination branch of the pull request!
+`AgentVault` blocks a payment when:
 
-![image](https://github.com/user-attachments/assets/b16befcd-2c29-4520-aa70-29883306e85c)
+- agent is not registered
+- agent is frozen
+- recipient is not allowlisted
+- amount is zero
+- amount exceeds `maxPerPayment`
+- daily spend exceeds `dailyLimit`
+- deposited vault balance is insufficient
+- reason contains one of:
+  - `ignore previous`
+  - `transfer all`
+  - `override policy`
+  - `send everything`
+  - `bypass`
+
+Blocked payments do not transfer funds. They emit `PaymentBlocked` and increment the agent's suspicious count in `AgentRegistry`.
+
+## Deployed on Monad Testnet
+
+```env
+CONTRACT_ADDRESS_AGENT_REGISTRY=0x3b49D866741aDF970bF8E41AB359662C66432C09
+CONTRACT_ADDRESS_AGENT_VAULT=0x49b66b94828878c5c5bFc1a497956D2A80Fc11E4
+```
+
+Demo wallet used:
+
+```txt
+0x3a6F06de4355530c8F7b25e5EaA37fB6D3561804
+```
+
+Sample transactions:
+
+```txt
+Register agent:
+0xa9306d822323ad40c49bee0a4e8236da2c00b4361c6767d5faf4662cd94a49bd
+
+Register allowlisted recipient:
+0x314146e8ca70c7371dd287886ad964c33a8ba222e0d78f921a394b26144df852
+
+Deposit MON into AgentVault:
+0x3092221cfa15f2fa2b853b8457007da41c767821b2b04e78780be28ee3301f5d
+
+Approved payment:
+0xc6379767983e39e8aae62569ba0e3b46d5f7c8cb43ba9f065ae75e9d43da17da
+
+Blocked prompt-injection payment:
+0x92f1cce24939c99bd14128eacc55038e407815ca526b5280a46e72b0f3e9ae84
+
+Escrow created:
+0xa57a529130927078ae58e8862bbdaa84bbb31491b5f0acda54a8e9b6503dfaac
+
+Escrow approved:
+0xcb8a5a69a8bfebcf7fa76f8b4ea72d9f8cd86a2600e8c2182e6bbe462b2181f6
+
+Escrow released:
+0xa2b25e42b43900fd4ea3f374c7b5727757c0b54609bbb10a94a411c418dc7859
+```
+
+View transactions on MonadVision:
+
+```txt
+https://testnet.monadvision.com/tx/<TX_HASH>
+```
+
+## Local Setup
+
+```bash
+npm install
+npm test
+npm run compile
+npm run abi
+```
+
+Expected test result:
+
+```txt
+4 passing
+```
+
+## Environment
+
+Create `.env` from `.env.example`.
+
+Required for deploy:
+
+```env
+RPC_URL=https://testnet-rpc.monad.xyz
+PRIVATE_KEY_DEPLOYER=0x...
+```
+
+Do not commit `.env`. Do not share private keys.
+
+After deployment:
+
+```env
+NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS=0x...
+NEXT_PUBLIC_AGENT_VAULT_ADDRESS=0x...
+```
+
+Optional demo setup:
+
+```env
+DEMO_AGENT_ADDRESS=0x...
+DEMO_API_PROVIDER_ADDRESS=0x...
+DEMO_VERIFIER_ADDRESS=0x...
+```
+
+## Commands
+
+Compile:
+
+```bash
+npm run compile
+```
+
+Test:
+
+```bash
+npm test
+```
+
+Export ABI files into `abi/`:
+
+```bash
+npm run abi
+```
+
+Deploy to Monad Testnet:
+
+```bash
+npm run deploy:monad
+```
+
+Register demo agent, API provider, and verifier:
+
+```bash
+npm run setup:monad
+```
+
+Run deployed demo transactions:
+
+```bash
+npm run demo:monad
+```
+
+## Backend Integration Notes
+
+The backend can use the ABI files in `abi/` and call:
+
+- `deposit()` with native MON value from the agent wallet
+- `requestPayment(bytes32 taskId, address agent, address payable to, uint256 amount, string actionType, string reason)`
+- `createEscrow(bytes32 taskId, address agent, address payable verifier, uint256 amount, string reason)`
+- `approveEscrow(bytes32 taskId)` from verifier
+- `releaseEscrow(bytes32 taskId)` from verifier or agent
+
+Important events for the dashboard:
+
+- `PaymentApproved`
+- `PaymentBlocked`
+- `EscrowCreated`
+- `EscrowReleased`
+- `AgentFrozen`
