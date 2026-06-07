@@ -1,0 +1,18 @@
+{
+  "name": "guardrail-pay",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "abi": "hardhat run scripts/export-abi.js",
+    "deploy:monad": "hardhat run scripts/deploy.js --network monadTestnet",
+    "setup:monad": "hardhat run scripts/setup-demo.js --network monadTestnet",
+    "demo:monad": "hardhat run scripts/demo-transactions.js --network monadTestnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.7",
+    "hardhat": "^2.26.0"
+  }
+}
