@@ -22,6 +22,7 @@ import { runAllScenarios } from "../agent/scenarios.ts";
 import { AgentRunner, type PaymentRequest } from "../agent/AgentRunner.ts";
 import { ADDRESSES, AMOUNTS, REASONS } from "../agent/constants.ts";
 import { log } from "../lib/logger.ts";
+import { tryBuildOnChainRunner } from "./OnChainDemoRunner.ts";
 import type { ScenarioResult } from "../types/scenario.ts";
 
 // --- Dependency contract --------------------------------------------------
@@ -104,10 +105,26 @@ export class DemoRunner {
 
   /** Run the full story and return all events + all LLM outputs. */
   async fullRun(): Promise<DemoRunResponse> {
-    // Collect LLM proposals (best-effort) and the deterministic verdicts.
-    const llmOutputs = await this.collectLlmOutputs();
-    const events = runAllScenarios({ reset: true });
+    // LLM proposals (real Ollama) run in parallel with the verdict source.
+    const llmPromise = this.collectLlmOutputs();
 
+    // Prefer the REAL on-chain runner when a chain is configured. Each act is a
+    // live Monad transaction with a real txHash. Fall back to the deterministic
+    // mock engine only when no chain/keys are available (MOCK_CHAIN=true).
+    const onchain = tryBuildOnChainRunner();
+    if (onchain) {
+      try {
+        const [llmOutputs, { summary, events }] = await Promise.all([llmPromise, onchain.run()]);
+        log.info("demo.onchain_run", { totalEvents: events.length });
+        return { summary, llmOutputs, events };
+      } catch (err) {
+        log.error("demo.onchain_failed", { error: err instanceof Error ? err.message : String(err) });
+        throw err;
+      }
+    }
+
+    const llmOutputs = await llmPromise;
+    const events = runAllScenarios({ reset: true });
     return { summary: summarize(events), llmOutputs, events };
   }
 

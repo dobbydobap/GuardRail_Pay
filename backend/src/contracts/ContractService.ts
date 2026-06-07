@@ -26,6 +26,7 @@ import {
   JsonRpcProvider,
   Wallet,
   formatEther,
+  id as keccakId,
   parseEther,
   type ContractEventPayload,
   type InterfaceAbi,
@@ -76,15 +77,20 @@ export interface TxResult {
   results: ScenarioResult[];
 }
 
-/** Maps a contract event name onto the ScenarioResult fields it implies. */
+/**
+ * Maps a contract event name onto the ScenarioResult fields it implies.
+ * `toArg` is the event arg holding the recipient (the real AgentVault uses
+ * `verifier` for escrow events). `reasonArg` may be absent (e.g. EscrowReleased
+ * carries no reason) — we fall back to the event name.
+ */
 const EVENT_MAP: Record<
   string,
-  { status: ScenarioStatus; actionType: ActionType; reasonArg: string; isBlock?: boolean }
+  { status: ScenarioStatus; actionType: ActionType; toArg: string; reasonArg?: string; isBlock?: boolean }
 > = {
-  PaymentApproved: { status: "APPROVED", actionType: ActionType.PAYMENT, reasonArg: "reason" },
-  PaymentBlocked: { status: "BLOCKED", actionType: ActionType.PAYMENT, reasonArg: "blockReason", isBlock: true },
-  EscrowCreated: { status: "ESCROW_CREATED", actionType: ActionType.ESCROW_CREATE, reasonArg: "reason" },
-  EscrowReleased: { status: "ESCROW_RELEASED", actionType: ActionType.ESCROW_RELEASE, reasonArg: "reason" },
+  PaymentApproved: { status: "APPROVED", actionType: ActionType.PAYMENT, toArg: "to", reasonArg: "reason" },
+  PaymentBlocked: { status: "BLOCKED", actionType: ActionType.PAYMENT, toArg: "to", reasonArg: "blockReason", isBlock: true },
+  EscrowCreated: { status: "ESCROW_CREATED", actionType: ActionType.ESCROW_CREATE, toArg: "verifier", reasonArg: "reason" },
+  EscrowReleased: { status: "ESCROW_RELEASED", actionType: ActionType.ESCROW_RELEASE, toArg: "verifier" },
 };
 
 // --- Service --------------------------------------------------------------
@@ -134,26 +140,77 @@ export class ContractService {
     return this.vault.connect(wallet) as Contract;
   }
 
+  /** The agent address payments are signed from (the agent wallet). */
+  get agentAddress(): string {
+    if (!this.agentWallet) throw new Error("ContractService: PRIVATE_KEY_AGENT is not configured.");
+    return this.agentWallet.address;
+  }
+
+  /** The verifier address escrows release to (the verifier wallet). */
+  get verifierAddress(): string {
+    if (!this.verifierWallet) throw new Error("ContractService: PRIVATE_KEY_VERIFIER is not configured.");
+    return this.verifierWallet.address;
+  }
+
+  /** Mint a fresh bytes32 task id for a new on-chain action. */
+  newTaskId(seed = ""): string {
+    return keccakId(`${seed}-${Date.now()}-${Math.random()}`);
+  }
+
   // --- Writes -------------------------------------------------------------
 
-  /** Submit a payment request (signed by the agent). */
-  async requestPayment(to: string, amount: string | number, memo = ""): Promise<TxResult> {
+  /**
+   * Submit a payment request to the real AgentVault (signed by the agent).
+   * The contract itself decides APPROVED vs BLOCKED and emits the event.
+   */
+  async requestPayment(
+    to: string,
+    amount: string | number,
+    actionType = "PAYMENT",
+    reason = "",
+    taskId = this.newTaskId("pay"),
+  ): Promise<TxResult> {
     const vault = this.vaultAs(this.agentWallet, "AGENT");
-    const tx = await vault.getFunction("requestPayment")(to, parseEther(String(amount)), memo);
+    const tx = await vault.getFunction("requestPayment")(
+      taskId,
+      this.agentAddress,
+      to,
+      parseEther(String(amount)),
+      actionType,
+      reason,
+    );
     return this.settle(tx);
   }
 
-  /** Open an escrow (signed by the agent). */
-  async createEscrow(to: string, amount: string | number, memo = ""): Promise<TxResult> {
+  /** Open an escrow toward the verifier (signed by the agent). */
+  async createEscrow(
+    verifier: string,
+    amount: string | number,
+    reason = "",
+    taskId = this.newTaskId("escrow"),
+  ): Promise<TxResult> {
     const vault = this.vaultAs(this.agentWallet, "AGENT");
-    const tx = await vault.getFunction("createEscrow")(to, parseEther(String(amount)), memo);
+    const tx = await vault.getFunction("createEscrow")(
+      taskId,
+      this.agentAddress,
+      verifier,
+      parseEther(String(amount)),
+      reason,
+    );
     return this.settle(tx);
   }
 
-  /** Release an escrow by id (signed by the verifier). */
-  async releaseEscrow(escrowId: string): Promise<TxResult> {
+  /** Approve an escrow by task id (signed by the verifier). */
+  async approveEscrow(taskId: string): Promise<TxResult> {
     const vault = this.vaultAs(this.verifierWallet, "VERIFIER");
-    const tx = await vault.getFunction("releaseEscrow")(escrowId);
+    const tx = await vault.getFunction("approveEscrow")(taskId);
+    return this.settle(tx);
+  }
+
+  /** Release an escrow by task id (signed by the verifier). */
+  async releaseEscrow(taskId: string): Promise<TxResult> {
+    const vault = this.vaultAs(this.verifierWallet, "VERIFIER");
+    const tx = await vault.getFunction("releaseEscrow")(taskId);
     return this.settle(tx);
   }
 
@@ -194,12 +251,13 @@ export class ContractService {
 
     const args = parsed.args as unknown as Record<string, unknown> & ArrayLike<unknown>;
     const idArg = (args.taskId ?? args.escrowId ?? args[0]) as string | undefined;
-    const reason = (args[mapping.reasonArg] as string | undefined) ?? parsed.name;
+    const reason =
+      (mapping.reasonArg ? (args[mapping.reasonArg] as string | undefined) : undefined) ?? parsed.name;
 
     return {
       taskId: idArg ?? generateTaskId(),
       agent: String(args.agent ?? ""),
-      to: String(args.to ?? ""),
+      to: String(args[mapping.toArg] ?? args.to ?? ""),
       amount: formatEther((args.amount ?? 0n) as bigint),
       actionType: mapping.actionType,
       reason,

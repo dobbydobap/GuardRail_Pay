@@ -9,6 +9,7 @@ const STATUS_COLORS = {
 }
 
 const REVEAL_MS = 900 // delay between each transaction appearing
+const EXPLORER = import.meta.env.VITE_EXPLORER_URL || 'https://testnet.monadexplorer.com'
 
 function Badge({ label, ok }) {
   return (
@@ -49,7 +50,11 @@ function Transaction({ e, n }) {
           <b>{e.amount}</b> → <span className="gr-mono" title={e.to}>{short(e.to)}</span>
         </div>
         <div className="gr-reason">{e.blockReason ? <b style={{ color: accent }}>{e.blockReason}</b> : null} {e.reason}</div>
-        {e.txHash && <div className="gr-hash gr-mono">tx {short(e.txHash)}</div>}
+        {e.txHash && (
+          <a className="gr-hash gr-mono" href={`${EXPLORER}/tx/${e.txHash}`} target="_blank" rel="noreferrer">
+            tx {short(e.txHash)} ↗
+          </a>
+        )}
       </div>
     </div>
   )

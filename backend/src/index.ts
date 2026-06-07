@@ -40,6 +40,9 @@ const handlers: Record<string, RouteHandler> = Object.fromEntries(
 
 const server = Bun.serve({
   port: PORT,
+  // A full on-chain demo run submits ~6 sequential Monad transactions (~12s),
+  // so keep the connection alive well past Bun's 10s default.
+  idleTimeout: 120,
   async fetch(req) {
     const url = new URL(req.url);
     const startedAt = Date.now();

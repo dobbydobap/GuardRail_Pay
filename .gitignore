@@ -6,3 +6,9 @@ cache/
 coverage/
 .env
 .env.local
+
+# local on-chain demo secrets/artifacts
+scripts/.agent.key
+scripts/.onchain.json
+backend/.env
+frontend/.env

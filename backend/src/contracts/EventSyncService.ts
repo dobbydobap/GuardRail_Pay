@@ -17,7 +17,7 @@
  * store integration, stats).
  */
 
-import { formatEther, type ContractEventPayload, type Log } from "ethers";
+import { formatEther, type Log } from "ethers";
 
 import { ContractService } from "./ContractService.ts";
 import { eventStore } from "../store/scenarios.ts";
@@ -28,18 +28,19 @@ import { ActionType, type EventStore, type ScenarioResult, type ScenarioStatus }
 interface EventMapping {
   status: ScenarioStatus;
   actionType: string;
-  /** Which event arg carries the human-readable reason. */
-  reasonArg: string;
+  /** Which event arg carries the recipient address. */
+  toArg: string;
+  /** Which event arg carries the human-readable reason (absent => event name). */
+  reasonArg?: string;
   /** `"FROM_REASON"` = use the reasonArg value; a string = static code; null = none. */
   blockReason: "FROM_REASON" | string | null;
 }
 
 const EVENT_MAP: Record<string, EventMapping> = {
-  PaymentApproved: { status: "APPROVED", actionType: ActionType.PAYMENT, reasonArg: "reason", blockReason: null },
-  PaymentBlocked: { status: "BLOCKED", actionType: ActionType.PAYMENT, reasonArg: "blockReason", blockReason: "FROM_REASON" },
-  EscrowCreated: { status: "ESCROW_CREATED", actionType: ActionType.ESCROW_CREATE, reasonArg: "reason", blockReason: null },
-  EscrowReleased: { status: "ESCROW_RELEASED", actionType: ActionType.ESCROW_RELEASE, reasonArg: "reason", blockReason: null },
-  AgentFrozen: { status: "BLOCKED", actionType: "FREEZE", reasonArg: "reason", blockReason: "AGENT_FROZEN" },
+  PaymentApproved: { status: "APPROVED", actionType: ActionType.PAYMENT, toArg: "to", reasonArg: "reason", blockReason: null },
+  PaymentBlocked: { status: "BLOCKED", actionType: ActionType.PAYMENT, toArg: "to", reasonArg: "blockReason", blockReason: "FROM_REASON" },
+  EscrowCreated: { status: "ESCROW_CREATED", actionType: ActionType.ESCROW_CREATE, toArg: "verifier", reasonArg: "reason", blockReason: null },
+  EscrowReleased: { status: "ESCROW_RELEASED", actionType: ActionType.ESCROW_RELEASE, toArg: "verifier", blockReason: null },
 };
 
 const EVENT_NAMES = Object.keys(EVENT_MAP);
@@ -113,7 +114,7 @@ export class EventSyncService {
     if (this.replayBlocks > 0) {
       await this.replay(this.replayBlocks);
     }
-    this.attachListeners();
+    await this.attachListeners();
     this.running = true;
     console.log(`👂 EventSyncService live on AgentVault @ ${this.contract.address}`);
   }
@@ -133,10 +134,20 @@ export class EventSyncService {
     const latest = await this.contract.provider.getBlockNumber();
     const fromBlock = Math.max(0, latest - blocks);
 
+    // Monad (and many RPCs) cap eth_getLogs to a 100-block range, so we page
+    // through [fromBlock, latest] in windows of MAX_RANGE blocks.
+    const MAX_RANGE = 100;
     const logs: Log[] = [];
-    for (const name of EVENT_NAMES) {
-      const found = await this.contract.vault.queryFilter(name, fromBlock, latest);
-      logs.push(...(found as Log[]));
+    for (let start = fromBlock; start <= latest; start += MAX_RANGE) {
+      const end = Math.min(start + MAX_RANGE - 1, latest);
+      for (const name of EVENT_NAMES) {
+        try {
+          const found = await this.contract.vault.queryFilter(name, start, end);
+          logs.push(...(found as Log[]));
+        } catch (err) {
+          console.warn(`EventSyncService: replay window ${start}-${end} failed:`, err instanceof Error ? err.message : err);
+        }
+      }
     }
     // Process in chain order so the store reflects on-chain sequence.
     logs.sort((a, b) => a.blockNumber - b.blockNumber || a.index - b.index);
@@ -148,27 +159,37 @@ export class EventSyncService {
     console.log(`📜 EventSyncService replayed ${this.replayed} event(s) from block ${fromBlock}→${latest}.`);
   }
 
-  // --- Live listeners -----------------------------------------------------
+  // --- Live polling -------------------------------------------------------
+  //
+  // Monad's RPC does not support eth_newFilter (used by ethers' `.on()`), so we
+  // poll eth_getLogs over small block windows instead — robust and portable.
 
-  private attachListeners(): void {
-    for (const name of EVENT_NAMES) {
-      // ethers v6: (...eventArgs, ContractEventPayload). We re-decode the log.
-      this.contract.vault.on(name, (...listenerArgs: unknown[]) => {
-        void this.handleLive(listenerArgs[listenerArgs.length - 1] as ContractEventPayload);
-      });
-    }
-    this.unsubscribe = async () => {
-      for (const name of EVENT_NAMES) await this.contract.vault.off(name);
-    };
-  }
+  private async attachListeners(): Promise<void> {
+    let cursor = (await this.contract.provider.getBlockNumber()) + 1;
+    const intervalMs = process.env.SYNC_POLL_MS ? Number(process.env.SYNC_POLL_MS) : 3000;
 
-  private async handleLive(payload: ContractEventPayload): Promise<void> {
-    try {
-      const result = await this.decode(payload.log);
-      if (result) this.ingest(payload.log, result);
-    } catch (err) {
-      console.error("EventSyncService: failed to handle event", err);
-    }
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const latest = await this.contract.provider.getBlockNumber();
+          if (latest < cursor) return;
+          // Stay within the RPC's 100-block getLogs cap.
+          const to = Math.min(cursor + 99, latest);
+          for (const name of EVENT_NAMES) {
+            const found = (await this.contract.vault.queryFilter(name, cursor, to)) as Log[];
+            for (const log of found) {
+              const result = await this.decode(log);
+              if (result) this.ingest(log, result);
+            }
+          }
+          cursor = to + 1;
+        } catch (err) {
+          console.warn("EventSyncService: poll failed:", err instanceof Error ? err.message : err);
+        }
+      })();
+    }, intervalMs);
+
+    this.unsubscribe = async () => clearInterval(timer);
   }
 
   // --- Decode -------------------------------------------------------------
@@ -187,7 +208,8 @@ export class EventSyncService {
     if (!mapping) return null;
 
     const args = parsed.args as unknown as Record<string, unknown>;
-    const reason = (args[mapping.reasonArg] as string | undefined) ?? parsed.name;
+    const reason =
+      (mapping.reasonArg ? (args[mapping.reasonArg] as string | undefined) : undefined) ?? parsed.name;
 
     let blockReason: string | null = null;
     if (mapping.blockReason === "FROM_REASON") blockReason = reason;
@@ -201,7 +223,7 @@ export class EventSyncService {
     return {
       taskId,
       agent: String(args.agent ?? ""),
-      to: String(args.to ?? ""),
+      to: String(args[mapping.toArg] ?? args.to ?? ""),
       amount: formatEther((args.amount ?? 0n) as bigint),
       actionType: mapping.actionType,
       reason,
@@ -261,7 +283,8 @@ export async function startEventSyncIfConfigured(
     return undefined;
   }
   try {
-    const service = EventSyncService.fromEnv(options);
+    const replayBlocks = options.replayBlocks ?? (process.env.REPLAY_BLOCKS ? Number(process.env.REPLAY_BLOCKS) : 300);
+    const service = EventSyncService.fromEnv({ ...options, replayBlocks });
     await service.start();
     return service;
   } catch (err) {

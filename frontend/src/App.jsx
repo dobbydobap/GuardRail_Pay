@@ -272,7 +272,7 @@ function Ecommerce() {
 }
 
 export default function App() {
-  const [page, setPage] = useState('overview')
+  const [page, setPage] = useState('guardrail')
   return (
     <div className="app">
       <Sidebar page={page} setPage={setPage} />

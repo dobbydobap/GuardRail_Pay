@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp /tmp/verify.mjs /Users/praneethbudati/Desktop/hackathon/GuardRail_Pay/verify_tmp.mjs)",
+      "Bash(node verify_tmp.mjs)",
+      "Bash(node -e \"const a=require\\('./abi/AgentVault.json'\\);console.log\\(a.filter\\(x=>x.type==='function'||x.type==='event'\\).map\\(x=>x.type+' '+x.name+'\\('+\\(x.inputs||[]\\).map\\(i=>i.type+' '+i.name\\).join\\(', '\\)+'\\)'\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(sleep 2; cat /tmp/backend.log)",
+      "Read(//private/tmp/**)",
+      "Bash(pkill -f \"bun src/index.ts\")",
+      "Bash(bun src/index.ts)",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(break)",
+      "Bash(time curl -s -X POST http://localhost:4000/demo/full-run -o /tmp/demo.json -w \"HTTP %{http_code}\\\\n\")",
+      "Bash(node -e \"const d=require\\('/tmp/demo.json'\\);console.log\\('summary',JSON.stringify\\(d.summary\\)\\);console.log\\('llm sources:',d.llmOutputs.map\\(o=>o.scenario+'='+o.source\\).join\\(', '\\)\\);console.log\\(\\);d.events.forEach\\(\\(e,i\\)=>console.log\\(\\(i+1\\)+'.',e.status.padEnd\\(16\\),\\(e.blockReason||''\\).padEnd\\(26\\),e.actionType.padEnd\\(14\\),e.amount,'->',e.to.slice\\(0,10\\),e.txHash?\\('tx '+e.txHash.slice\\(0,14\\)\\):''\\)\\)\")",
+      "Bash(curl -s -X POST http://localhost:4000/demo/full-run -m 60)",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{try{const d=JSON.parse\\(s\\);console.log\\('ok=',d.ok,'firstTo=',d.events?.[0]?.to,'err=',d.error\\)}catch\\(e\\){console.log\\('RAW:',s.slice\\(0,300\\)\\)}}\\)\")",
+      "Bash(curl -s \"http://localhost:4000/events?limit=3\")",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const d=JSON.parse\\(s\\);console.log\\('count',d.count\\);\\(d.events||[]\\).forEach\\(e=>console.log\\(e.status,e.to,e.txHash\\)\\)}\\)\")",
+      "Bash(node -e \"let s='';process.stdin.on\\('data',d=>s+=d\\).on\\('end',\\(\\)=>{const d=JSON.parse\\(s\\);console.log\\('rpc',d.rpcConnected,'contract',d.contractConnected,'ollama',d.ollamaConnected\\)}\\)\")",
+      "Bash(curl -s -X POST http://localhost:4000/demo/full-run -m 90 -o /tmp/r1.json -w \"HTTP %{http_code} in %{time_total}s\\\\n\")",
+      "Bash(node -e \"const d=require\\('/tmp/r1.json'\\);if\\(!d.ok\\){console.log\\('ERROR',d.error\\);process.exit\\(1\\)}console.log\\('summary',JSON.stringify\\(d.summary\\)\\);d.events.forEach\\(\\(e,i\\)=>console.log\\(\\(i+1\\)+'.',e.status.padEnd\\(15\\),\\(e.blockReason||'-'\\).padEnd\\(28\\),e.amount.padEnd\\(6\\),'->',e.to.slice\\(0,8\\),e.txHash?\\('tx '+e.txHash.slice\\(0,12\\)\\):'\\(no tx\\)'\\)\\)\")",
+      "Bash(node -e \"const a=require\\('./abi/AgentRegistry.json'\\);console.log\\(a.filter\\(x=>x.type==='function'\\).map\\(x=>x.name+'\\('+\\(x.inputs||[]\\).map\\(i=>i.type\\).join\\(','\\)+'\\)'\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(printf '\\\\n# local on-chain demo secrets/artifacts\\\\nscripts/.agent.key\\\\nscripts/.onchain.json\\\\nbackend/.env\\\\nfrontend/.env\\\\n')",
+      "Bash(node scripts/setup-onchain.mjs)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}
